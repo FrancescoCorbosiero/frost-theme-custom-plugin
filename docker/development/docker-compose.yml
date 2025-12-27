@@ -1,0 +1,90 @@
+version: '3.8'
+
+# Docker Compose per ambiente di DEVELOPMENT
+# Hot reload attivo tramite bind mounts
+
+services:
+  # =============================================
+  # WORDPRESS - Applicazione principale
+  # =============================================
+  wordpress:
+    image: wordpress:latest
+    container_name: wordpress-dev
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
+      WORDPRESS_DEBUG: ${WORDPRESS_DEBUG}
+    volumes:
+      # Bind mounts per hot reload durante lo sviluppo
+      - ./../../themes/frost-child:/var/www/html/wp-content/themes/frost-child
+      - ./../../plugins/agency-custom-blocks:/var/www/html/wp-content/plugins/agency-custom-blocks
+      # Volume per uploads (persistenza)
+      - wordpress_uploads:/var/www/html/wp-content/uploads
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - mysql
+
+  # =============================================
+  # MYSQL - Database
+  # =============================================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-dev
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: ${WORDPRESS_DB_NAME}
+      MYSQL_USER: ${WORDPRESS_DB_USER}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend
+    command: --default-authentication-plugin=mysql_native_password
+
+  # =============================================
+  # PHPMYADMIN - Gestione database (solo dev)
+  # =============================================
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin-dev
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - mysql
+
+# =============================================
+# NETWORKS
+# =============================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+# =============================================
+# VOLUMES
+# =============================================
+volumes:
+  wordpress_uploads:
+    driver: local
+  mysql_data:
+    driver: local

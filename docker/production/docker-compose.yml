@@ -1,0 +1,92 @@
+version: '3.8'
+
+# Docker Compose per ambiente di PRODUCTION
+# Usa named volumes (no bind mounts) e Caddy per SSL automatico
+
+services:
+  # =============================================
+  # WORDPRESS - Applicazione principale
+  # =============================================
+  wordpress:
+    image: wordpress:latest
+    container_name: wordpress-prod
+    restart: always
+    expose:
+      - "80"
+    environment:
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
+      WORDPRESS_DEBUG: ${WORDPRESS_DEBUG}
+    volumes:
+      # Named volumes per persistenza dati in produzione
+      - wordpress_data:/var/www/html
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - mysql
+
+  # =============================================
+  # MYSQL - Database
+  # =============================================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-prod
+    restart: always
+    # Porta MySQL solo interna (non esposta all'esterno)
+    expose:
+      - "3306"
+    environment:
+      MYSQL_DATABASE: ${WORDPRESS_DB_NAME}
+      MYSQL_USER: ${WORDPRESS_DB_USER}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - backend
+    command: --default-authentication-plugin=mysql_native_password
+
+  # =============================================
+  # CADDY - Reverse Proxy con SSL automatico
+  # =============================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy-prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - frontend
+    depends_on:
+      - wordpress
+
+# =============================================
+# NETWORKS
+# =============================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+# =============================================
+# VOLUMES - Named volumes per produzione
+# =============================================
+volumes:
+  wordpress_data:
+    driver: local
+  mysql_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
