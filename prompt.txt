@@ -1,0 +1,153 @@
+FASE 1: INFRASTRUTTURA DOCKER + VPS
+
+Genera SOLO i file di infrastruttura Docker per development e production.
+
+NON generare ancora il child theme o il plugin - solo l'infrastruttura.
+
+===== FILE DA GENERARE =====
+
+1. docker/development/docker-compose.yml
+   - WordPress latest
+   - MySQL 8.0
+   - phpMyAdmin
+   - Bind mounts per hot reload:
+     * ./../../themes/frost-child → /var/www/html/wp-content/themes/frost-child
+     * ./../../plugins/agency-custom-blocks → /var/www/html/wp-content/plugins/agency-custom-blocks
+   - Porte: WordPress 8080, MySQL 3306, phpMyAdmin 8081
+   - Network: frontend + backend
+   - Container names: wordpress-dev, mysql-dev, phpmyadmin-dev
+
+2. docker/development/.env.example
+   - WORDPRESS_DB_NAME=wordpress_dev
+   - WORDPRESS_DB_USER=wpuser
+   - WORDPRESS_DB_PASSWORD=wppass
+   - MYSQL_ROOT_PASSWORD=rootpass
+   - WORDPRESS_TABLE_PREFIX=wp_
+   - WORDPRESS_DEBUG=true
+   - COMPOSE_PROJECT_NAME=frost-dev
+
+3. docker/production/docker-compose.yml
+   - WordPress latest (no bind mounts, usa volumes)
+   - MySQL 8.0
+   - Caddy (reverse proxy SSL)
+   - Porte: Caddy 80/443, MySQL solo interno
+   - Restart policy: always
+   - Networks: frontend + backend
+   - Volumes: wordpress_data, mysql_data
+   - Container names: wordpress-prod, mysql-prod, caddy-prod
+
+4. docker/production/.env.example
+   - WORDPRESS_DB_NAME=production_db
+   - WORDPRESS_DB_USER=wpuser_prod
+   - WORDPRESS_DB_PASSWORD=CHANGE_ME_STRONG_PASSWORD
+   - MYSQL_ROOT_PASSWORD=CHANGE_ME_STRONG_PASSWORD
+   - WORDPRESS_TABLE_PREFIX=wp_
+   - WORDPRESS_DEBUG=false
+   - DOMAIN=example.com
+
+5. docker/production/Caddyfile
+   - Config base per reverse proxy
+   - SSL automatico Let's Encrypt
+   - Gzip compression
+   - Security headers
+   - Placeholder domain: example.com
+   - Reverse proxy a wordpress:80
+
+6. docker/scripts/deploy.sh
+   - Script bash per deploy su VPS
+   - Git pull
+   - Docker compose up con rebuild
+   - Permessi chown www-data
+
+7. docker/scripts/backup-db.sh
+   - Backup MySQL con mysqldump
+   - Salva in /var/backups/wordpress/
+   - Filename con timestamp
+   - Compressione gzip
+
+8. docker/scripts/restore-db.sh
+   - Restore da backup
+   - Accetta parametro filename
+   - Decompressione + import
+
+9. .gitignore
+   - .env
+   - node_modules/
+   - vendor/
+   - *.log
+   - .DS_Store
+   - Thumbs.db
+   - .vscode/
+   - .idea/
+   - wp-content/uploads/ (se presente)
+   - docker/data/ (volumi locali)
+
+10. docs/DEPLOYMENT.md
+    - Guida step-by-step deploy VPS
+    - Prerequisiti sistema
+    - Comandi SSH
+    - Configurazione Caddy
+    - Verifica SSL
+    - Troubleshooting DNS
+
+11. docs/TROUBLESHOOTING.md
+    - Problemi comuni Docker
+    - Fix permessi file
+    - Reset database
+    - Caddy SSL issues
+    - Bind mount non funziona
+    - Container non parte
+
+===== REQUISITI TECNICI =====
+
+- Tutti i file YAML devono essere validi (usa yamllint mentalmente)
+- Script bash con shebang #!/bin/bash
+- Commenti inline in italiano dove utile
+- Environment variables ben documentate
+- Bind mounts development: path relativi (../../)
+- Production volumes: named volumes Docker
+- Caddy: usa versione 2.x syntax
+- MySQL: usa 8.0 (non latest per stabilità)
+- WordPress: usa latest (auto-update gestito da Docker)
+
+===== PRIORITÀ =====
+
+1. Development DEVE avere bind mounts funzionanti (hot reload)
+2. Production DEVE avere SSL automatico (Caddy)
+3. Script deploy DEVE essere semplice (1 comando)
+4. Documentazione DEVE essere chiara (italiano)
+5. .env.example DEVE avere valori sensati di default
+
+===== COSA NON FARE =====
+
+- ❌ NON generare child theme (Fase 2)
+- ❌ NON generare plugin (Fase 3)
+- ❌ NON usare named volumes in development (solo bind mounts)
+- ❌ NON usare bind mounts in production (solo named volumes)
+- ❌ NON usare phpMyAdmin in production (security)
+- ❌ NON committare file .env (solo .env.example)
+
+===== OUTPUT ATTESO =====
+
+Alla fine della generazione, fornisci:
+
+1. Lista di tutti i file generati con path
+2. Comandi quick start per testare:
+   ```bash
+   cd docker/development
+   cp .env.example .env
+   docker-compose up -d
+   # Attendi 30 sec
+   open http://localhost:8080
+   ```
+3. Checklist verifica:
+   - [ ] WordPress accessibile su :8080
+   - [ ] phpMyAdmin accessibile su :8081
+   - [ ] Database MySQL connesso
+   - [ ] Bind mounts funzionanti (modifica file = hot reload)
+
+===== INIZIA LA GENERAZIONE =====
+
+Genera i file uno per uno, mostrando il contenuto completo.
+
+Inizia con docker/development/docker-compose.yml
