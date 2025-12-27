@@ -1,0 +1,76 @@
+# =============================================
+# GITIGNORE - WordPress Docker Project
+# =============================================
+
+# =============================================
+# ENVIRONMENT FILES (contengono password!)
+# =============================================
+.env
+*.env.local
+.env.*.local
+
+# =============================================
+# DIPENDENZE
+# =============================================
+node_modules/
+vendor/
+
+# =============================================
+# BUILD E CACHE
+# =============================================
+*.log
+*.cache
+.sass-cache/
+dist/
+build/
+
+# =============================================
+# OS FILES
+# =============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================
+# IDE / EDITOR
+# =============================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# =============================================
+# DOCKER DATA (volumi locali)
+# =============================================
+docker/data/
+
+# =============================================
+# WORDPRESS UPLOADS (opzionale - rimuovi se vuoi versionare)
+# =============================================
+wp-content/uploads/
+themes/*/uploads/
+plugins/*/uploads/
+
+# =============================================
+# BACKUP (non versionare backup di database)
+# =============================================
+*.sql
+*.sql.gz
+backups/
+
+# =============================================
+# ALTRI
+# =============================================
+*.bak
+*.tmp
+*.temp
+.htaccess.bak
+wp-config.php.bak
