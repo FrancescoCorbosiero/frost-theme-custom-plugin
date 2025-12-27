@@ -1,92 +1,150 @@
-version: '3.8'
+# ============================================
+# DOCKER COMPOSE - PRODUCTION
+# ============================================
+# Architettura basata su Edizioni Rosi
+# - Caddy Docker Proxy ESTERNO (label-based routing, SSL automatico)
+# - MariaDB 11.4-lts (LTS fino 2029)
+# - WordPress 6-php8.3-apache
+# - Resource limits e healthchecks
+# - Named volumes con PROJECT_NAME prefix
+#
+# PREREQUISITO: Caddy Docker Proxy già configurato sul VPS
+# Vedi: docs/CADDY_PROXY_SETUP.md
+# ============================================
 
-# Docker Compose per ambiente di PRODUCTION
-# Usa named volumes (no bind mounts) e Caddy per SSL automatico
+# ============================================
+# NETWORKS
+# ============================================
+# - internal: comunicazione interna tra container
+# - caddy: network esterno condiviso con Caddy Docker Proxy
+networks:
+  internal:
+    name: ${PROJECT_NAME}-internal
+    driver: bridge
+  caddy:
+    external: true
+
+# ============================================
+# VOLUMES
+# ============================================
+# Named volumes con prefix per isolamento tra progetti
+volumes:
+  wordpress-data:
+    name: ${PROJECT_NAME}-wordpress-data
+  mariadb-data:
+    name: ${PROJECT_NAME}-mariadb-data
 
 services:
-  # =============================================
+  # ============================================
+  # MARIADB - Database
+  # ============================================
+  # MariaDB 11.4-lts: Long Term Support fino 2029
+  # Ottimizzato per WordPress con parametri tuning
+  mariadb:
+    image: mariadb:11.4
+    container_name: ${PROJECT_NAME}-mariadb
+    restart: unless-stopped
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    # Parametri ottimizzati per WordPress
+    command:
+      - --max_allowed_packet=256M
+      - --innodb_buffer_pool_size=${MARIADB_BUFFER_POOL:-128M}
+      - --innodb_log_file_size=64M
+      - --innodb_flush_log_at_trx_commit=2
+      - --wait_timeout=28800
+      - --interactive_timeout=28800
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    networks:
+      - internal
+    # Resource limits per container
+    deploy:
+      resources:
+        limits:
+          memory: ${MARIADB_MEMORY_LIMIT:-256M}
+        reservations:
+          memory: ${MARIADB_MEMORY_RESERVATION:-128M}
+    # Healthcheck per verificare che MariaDB sia pronto
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================
   # WORDPRESS - Applicazione principale
-  # =============================================
+  # ============================================
+  # WordPress 6 con PHP 8.3 (supporto fino 2027)
+  # Attende che MariaDB sia healthy prima di avviarsi
   wordpress:
-    image: wordpress:latest
-    container_name: wordpress-prod
-    restart: always
-    expose:
-      - "80"
-    environment:
-      WORDPRESS_DB_HOST: mysql:3306
-      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
-      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
-      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
-      WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
-      WORDPRESS_DEBUG: ${WORDPRESS_DEBUG}
-    volumes:
-      # Named volumes per persistenza dati in produzione
-      - wordpress_data:/var/www/html
-    networks:
-      - frontend
-      - backend
+    image: wordpress:6-php8.3-apache
+    container_name: ${PROJECT_NAME}-wordpress
+    restart: unless-stopped
     depends_on:
-      - mysql
-
-  # =============================================
-  # MYSQL - Database
-  # =============================================
-  mysql:
-    image: mysql:8.0
-    container_name: mysql-prod
-    restart: always
-    # Porta MySQL solo interna (non esposta all'esterno)
-    expose:
-      - "3306"
-    environment:
-      MYSQL_DATABASE: ${WORDPRESS_DB_NAME}
-      MYSQL_USER: ${WORDPRESS_DB_USER}
-      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      mariadb:
+        condition: service_healthy
     volumes:
-      - mysql_data:/var/lib/mysql
+      - wordpress-data:/var/www/html
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: ${DB_NAME}
+      WORDPRESS_DB_USER: ${DB_USER}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${TABLE_PREFIX:-wp_}
+      # Configurazione extra WordPress
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_MEMORY_LIMIT', '${WP_MEMORY_LIMIT:-256M}');
+        define('WP_MAX_MEMORY_LIMIT', '${WP_MAX_MEMORY_LIMIT:-512M}');
+        define('FS_METHOD', 'direct');
+        define('DISALLOW_FILE_EDIT', ${DISALLOW_FILE_EDIT:-false});
     networks:
-      - backend
-    command: --default-authentication-plugin=mysql_native_password
+      - internal
+      - caddy
+    # Resource limits per container
+    deploy:
+      resources:
+        limits:
+          memory: ${WP_MEMORY_LIMIT_CONTAINER:-512M}
+        reservations:
+          memory: ${WP_MEMORY_RESERVATION:-256M}
+    # Labels per Caddy Docker Proxy (SSL automatico)
+    labels:
+      caddy: ${DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 80}}"
+      caddy.encode: zstd gzip
+      caddy.header.X-Content-Type-Options: nosniff
+      caddy.header.X-Frame-Options: SAMEORIGIN
+      caddy.header.Referrer-Policy: strict-origin-when-cross-origin
+      caddy.request_body.max_size: 512MB
 
-  # =============================================
-  # CADDY - Reverse Proxy con SSL automatico
-  # =============================================
-  caddy:
-    image: caddy:2-alpine
-    container_name: caddy-prod
-    restart: always
+  # ============================================
+  # PHPMYADMIN - Database GUI (OPZIONALE)
+  # ============================================
+  # Attivo SOLO con: docker compose --profile debug up -d
+  # Accessibile SOLO via SSH tunnel (127.0.0.1:8081)
+  # NON esposto su internet per sicurezza
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: ${PROJECT_NAME}-phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_USER: ${DB_USER}
+      PMA_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - internal
+    # IMPORTANTE: Solo localhost (richiede SSH tunnel)
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - frontend
-    depends_on:
-      - wordpress
-
-# =============================================
-# NETWORKS
-# =============================================
-networks:
-  frontend:
-    driver: bridge
-  backend:
-    driver: bridge
-
-# =============================================
-# VOLUMES - Named volumes per produzione
-# =============================================
-volumes:
-  wordpress_data:
-    driver: local
-  mysql_data:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
-    driver: local
+      - "127.0.0.1:${PHPMYADMIN_PORT:-8081}:80"
+    # Avvia solo con --profile debug
+    profiles:
+      - debug

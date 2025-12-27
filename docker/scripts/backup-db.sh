@@ -1,97 +1,107 @@
 #!/bin/bash
-
-# =============================================
+# ============================================
 # SCRIPT DI BACKUP DATABASE
-# =============================================
-# Uso: ./backup-db.sh [dev|prod]
-# Default: prod
+# ============================================
+# Uso: bash docker/scripts/backup-db.sh
+# Esegui dalla root del progetto
+#
+# Questo script:
+# 1. Dump del database MariaDB
+# 2. Compressione con gzip
+# 3. Salvataggio in BACKUP_DIR
+# 4. Pulizia backup > 30 giorni
+# ============================================
 
-set -e
+set -e  # Esce in caso di errore
 
 # Colori per output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
-# Parametro ambiente (default: prod)
-ENV="${1:-prod}"
-
-# Directory backup
-BACKUP_DIR="/var/backups/wordpress"
-
-# Timestamp per nome file
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-
-# Configurazione in base all'ambiente
-if [ "$ENV" == "dev" ]; then
-    CONTAINER_NAME="mysql-dev"
-    ENV_FILE="docker/development/.env"
-    BACKUP_PREFIX="dev"
-elif [ "$ENV" == "prod" ]; then
-    CONTAINER_NAME="mysql-prod"
-    ENV_FILE="docker/production/.env"
-    BACKUP_PREFIX="prod"
-else
-    echo -e "${RED}ERRORE: Ambiente non valido. Usa 'dev' o 'prod'${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}========================================${NC}"
-echo -e "${YELLOW}       BACKUP DATABASE WORDPRESS        ${NC}"
-echo -e "${YELLOW}       Ambiente: ${ENV}                 ${NC}"
-echo -e "${YELLOW}========================================${NC}"
-
-# Trova la root del progetto
+# Directory base del progetto
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+PRODUCTION_DIR="$PROJECT_ROOT/docker/production"
 
 # Carica variabili d'ambiente
-if [ -f "$PROJECT_ROOT/$ENV_FILE" ]; then
-    source "$PROJECT_ROOT/$ENV_FILE"
+if [ -f "$PRODUCTION_DIR/.env" ]; then
+    source "$PRODUCTION_DIR/.env"
 else
-    echo -e "${RED}ERRORE: File $ENV_FILE non trovato!${NC}"
+    echo -e "${RED}Errore: .env file non trovato in $PRODUCTION_DIR${NC}"
     exit 1
 fi
 
+# Directory backup (default se non specificata)
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/wordpress}"
+
 # Crea directory backup se non esiste
-echo -e "\n${GREEN}[1/3]${NC} Creazione directory backup..."
-sudo mkdir -p "$BACKUP_DIR"
-sudo chown $(whoami):$(whoami) "$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR"
 
-# Nome file backup
-BACKUP_FILE="${BACKUP_DIR}/wordpress_${BACKUP_PREFIX}_${TIMESTAMP}.sql.gz"
+# Filename con timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/${PROJECT_NAME}_${TIMESTAMP}.sql.gz"
 
-echo -e "\n${GREEN}[2/3]${NC} Esecuzione backup database..."
-echo -e "Container: ${CONTAINER_NAME}"
-echo -e "Database: ${WORDPRESS_DB_NAME}"
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}   BACKUP DATABASE WORDPRESS               ${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo ""
+echo -e "Project:  ${YELLOW}${PROJECT_NAME}${NC}"
+echo -e "Database: ${YELLOW}${DB_NAME}${NC}"
+echo -e "Output:   ${YELLOW}${BACKUP_FILE}${NC}"
+echo ""
 
-# Esegui mysqldump e comprimi
-docker exec "$CONTAINER_NAME" mysqldump \
-    -u"$WORDPRESS_DB_USER" \
-    -p"$WORDPRESS_DB_PASSWORD" \
+# Verifica che il container MariaDB esista e sia running
+if ! docker ps --format '{{.Names}}' | grep -q "${PROJECT_NAME}-mariadb"; then
+    echo -e "${RED}Errore: Container ${PROJECT_NAME}-mariadb non trovato o non running${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}[1/3]${NC} Esecuzione dump database..."
+
+# Dump database con compressione
+docker exec ${PROJECT_NAME}-mariadb \
+    mysqldump -u root -p"${DB_ROOT_PASSWORD}" \
     --single-transaction \
     --quick \
     --lock-tables=false \
-    "$WORDPRESS_DB_NAME" | gzip > "$BACKUP_FILE"
+    "${DB_NAME}" | gzip > "$BACKUP_FILE"
 
-echo -e "\n${GREEN}[3/3]${NC} Verifica backup..."
+echo -e "${YELLOW}[2/3]${NC} Verifica backup..."
 
 # Verifica che il file esista e non sia vuoto
 if [ -f "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
     FILE_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}       BACKUP COMPLETATO!               ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "\nFile: ${BACKUP_FILE}"
-    echo -e "Dimensione: ${FILE_SIZE}"
-    echo -e "\nPer ripristinare usa:"
-    echo -e "  ./restore-db.sh ${ENV} ${BACKUP_FILE}"
+    echo -e "  ${GREEN}Backup completato!${NC}"
+    echo -e "  Size: ${GREEN}${FILE_SIZE}${NC}"
 else
-    echo -e "${RED}ERRORE: Backup fallito!${NC}"
+    echo -e "${RED}Errore: Backup fallito - file vuoto o non creato${NC}"
     exit 1
 fi
 
+echo -e "${YELLOW}[3/3]${NC} Pulizia backup vecchi..."
+
+# Conta backup prima della pulizia
+OLD_COUNT=$(find "$BACKUP_DIR" -name "${PROJECT_NAME}_*.sql.gz" -mtime +30 | wc -l)
+
+# Rimuovi backup piu vecchi di 30 giorni
+find "$BACKUP_DIR" -name "${PROJECT_NAME}_*.sql.gz" -mtime +30 -delete
+
+echo -e "  Rimossi ${OLD_COUNT} backup > 30 giorni"
+
+echo ""
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}   BACKUP COMPLETATO!                      ${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo ""
+echo -e "File: ${GREEN}${BACKUP_FILE}${NC}"
+echo -e "Size: ${GREEN}${FILE_SIZE}${NC}"
+echo ""
+echo -e "${YELLOW}Per ripristinare:${NC}"
+echo -e "  bash docker/scripts/restore-db.sh ${BACKUP_FILE}"
+echo ""
+
 # Lista ultimi 5 backup
-echo -e "\n${YELLOW}Ultimi 5 backup:${NC}"
-ls -lht "$BACKUP_DIR" | head -6
+echo -e "${YELLOW}Ultimi 5 backup:${NC}"
+ls -lht "$BACKUP_DIR"/${PROJECT_NAME}_*.sql.gz 2>/dev/null | head -5
