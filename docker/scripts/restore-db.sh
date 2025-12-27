@@ -1,108 +1,91 @@
 #!/bin/bash
-
-# =============================================
+# ============================================
 # SCRIPT DI RESTORE DATABASE
-# =============================================
-# Uso: ./restore-db.sh [dev|prod] [path/to/backup.sql.gz]
-# Esempio: ./restore-db.sh prod /var/backups/wordpress/backup.sql.gz
+# ============================================
+# Uso: bash docker/scripts/restore-db.sh /path/to/backup.sql.gz
+# Esegui dalla root del progetto
+#
+# ATTENZIONE: Questo script SOVRASCRIVE il database!
+# ============================================
 
-set -e
+set -e  # Esce in caso di errore
 
 # Colori per output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
-# Verifica parametri
-if [ $# -lt 2 ]; then
-    echo -e "${RED}ERRORE: Parametri mancanti!${NC}"
-    echo -e "Uso: ./restore-db.sh [dev|prod] [path/to/backup.sql.gz]"
-    echo -e "Esempio: ./restore-db.sh prod /var/backups/wordpress/backup.sql.gz"
+# Verifica parametro backup file
+if [ -z "$1" ]; then
+    echo -e "${RED}Errore: Path del backup file richiesto${NC}"
+    echo ""
+    echo "Uso: bash docker/scripts/restore-db.sh /path/to/backup.sql.gz"
+    echo ""
+    echo "Esempio:"
+    echo "  bash docker/scripts/restore-db.sh /var/backups/wordpress/frost-production_20241227_150000.sql.gz"
     exit 1
 fi
 
-ENV="$1"
-BACKUP_FILE="$2"
+BACKUP_FILE="$1"
 
-# Verifica che il file di backup esista
+# Verifica che il file esista
 if [ ! -f "$BACKUP_FILE" ]; then
-    echo -e "${RED}ERRORE: File di backup non trovato: $BACKUP_FILE${NC}"
+    echo -e "${RED}Errore: Backup file non trovato: $BACKUP_FILE${NC}"
     exit 1
 fi
 
-# Configurazione in base all'ambiente
-if [ "$ENV" == "dev" ]; then
-    CONTAINER_NAME="mysql-dev"
-    ENV_FILE="docker/development/.env"
-elif [ "$ENV" == "prod" ]; then
-    CONTAINER_NAME="mysql-prod"
-    ENV_FILE="docker/production/.env"
-else
-    echo -e "${RED}ERRORE: Ambiente non valido. Usa 'dev' o 'prod'${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}========================================${NC}"
-echo -e "${YELLOW}       RESTORE DATABASE WORDPRESS       ${NC}"
-echo -e "${YELLOW}       Ambiente: ${ENV}                 ${NC}"
-echo -e "${YELLOW}========================================${NC}"
-
-# Trova la root del progetto
+# Directory base del progetto
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+PRODUCTION_DIR="$PROJECT_ROOT/docker/production"
 
 # Carica variabili d'ambiente
-if [ -f "$PROJECT_ROOT/$ENV_FILE" ]; then
-    source "$PROJECT_ROOT/$ENV_FILE"
+if [ -f "$PRODUCTION_DIR/.env" ]; then
+    source "$PRODUCTION_DIR/.env"
 else
-    echo -e "${RED}ERRORE: File $ENV_FILE non trovato!${NC}"
+    echo -e "${RED}Errore: .env file non trovato in $PRODUCTION_DIR${NC}"
     exit 1
 fi
 
-echo -e "\n${YELLOW}ATTENZIONE: Questo sovrascriverà TUTTI i dati del database!${NC}"
-echo -e "Database: ${WORDPRESS_DB_NAME}"
-echo -e "Backup: ${BACKUP_FILE}"
-echo -e ""
-read -p "Sei sicuro di voler continuare? (y/N): " confirm
+echo -e "${YELLOW}============================================${NC}"
+echo -e "${YELLOW}   RESTORE DATABASE WORDPRESS              ${NC}"
+echo -e "${YELLOW}============================================${NC}"
+echo ""
+echo -e "Project:  ${YELLOW}${PROJECT_NAME}${NC}"
+echo -e "Database: ${YELLOW}${DB_NAME}${NC}"
+echo -e "Backup:   ${YELLOW}${BACKUP_FILE}${NC}"
+echo ""
+echo -e "${RED}ATTENZIONE: Questo sovrascrivera' TUTTI i dati del database!${NC}"
+echo ""
+read -p "Sei sicuro di voler continuare? (yes/no): " CONFIRM
 
-if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-    echo -e "${YELLOW}Operazione annullata.${NC}"
+if [ "$CONFIRM" != "yes" ]; then
+    echo -e "${YELLOW}Operazione annullata${NC}"
     exit 0
 fi
 
-echo -e "\n${GREEN}[1/3]${NC} Decompressione backup..."
-
-# Determina se il file è compresso
-if [[ "$BACKUP_FILE" == *.gz ]]; then
-    echo "File compresso, decompressione in corso..."
-    TEMP_SQL="/tmp/restore_$(date +%s).sql"
-    gunzip -c "$BACKUP_FILE" > "$TEMP_SQL"
-    SQL_FILE="$TEMP_SQL"
-    CLEANUP_TEMP=true
-else
-    SQL_FILE="$BACKUP_FILE"
-    CLEANUP_TEMP=false
+# Verifica che il container MariaDB esista e sia running
+if ! docker ps --format '{{.Names}}' | grep -q "${PROJECT_NAME}-mariadb"; then
+    echo -e "${RED}Errore: Container ${PROJECT_NAME}-mariadb non trovato o non running${NC}"
+    exit 1
 fi
 
-echo -e "\n${GREEN}[2/3]${NC} Importazione database..."
-echo -e "Container: ${CONTAINER_NAME}"
+echo ""
+echo -e "${YELLOW}[1/2]${NC} Ripristino database in corso..."
 
-# Esegui l'import
-cat "$SQL_FILE" | docker exec -i "$CONTAINER_NAME" mysql \
-    -u"$WORDPRESS_DB_USER" \
-    -p"$WORDPRESS_DB_PASSWORD" \
-    "$WORDPRESS_DB_NAME"
+# Decomprimi e importa
+gunzip < "$BACKUP_FILE" | docker exec -i ${PROJECT_NAME}-mariadb \
+    mysql -u root -p"${DB_ROOT_PASSWORD}" "${DB_NAME}"
 
-echo -e "\n${GREEN}[3/3]${NC} Pulizia file temporanei..."
+echo -e "${YELLOW}[2/2]${NC} Verifica completata..."
 
-# Rimuovi file temporaneo se creato
-if [ "$CLEANUP_TEMP" = true ] && [ -f "$TEMP_SQL" ]; then
-    rm "$TEMP_SQL"
-fi
-
-echo -e "\n${GREEN}========================================${NC}"
-echo -e "${GREEN}       RESTORE COMPLETATO!              ${NC}"
-echo -e "${GREEN}========================================${NC}"
-
-echo -e "\n${YELLOW}Nota: Potrebbe essere necessario svuotare la cache di WordPress.${NC}"
+echo ""
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}   RESTORE COMPLETATO!                     ${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo ""
+echo -e "${YELLOW}Prossimi passi consigliati:${NC}"
+echo -e "1. Riavvia WordPress: docker compose restart wordpress"
+echo -e "2. Svuota cache WordPress (se WP Super Cache o simile)"
+echo -e "3. Verifica il sito: https://${DOMAIN}"

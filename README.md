@@ -186,70 +186,81 @@ docker exec -it wordpress-dev wp theme activate frost-child
 docker exec -it wordpress-dev wp plugin activate agency-custom-blocks
 ```
 
-## 🌐 Deploy su VPS - Production
+## 🌐 Production Deployment (VPS)
 
-### Prerequisiti VPS
+### Architettura Production
 
-- Ubuntu 22.04+ (o Debian)
-- Docker + Docker Compose installati
-- Dominio puntato al VPS (A record)
-- Porte 80 e 443 aperte
+- **Caddy Docker Proxy** esterno (SSL automatico, multi-sito)
+- **MariaDB 11.4-lts** (supporto fino 2029)
+- **WordPress 6-php8.3-apache** (PHP 8.3 supporto fino 2027)
+- **Resource limits** e healthchecks
+- **Named volumes** con isolamento per progetto
+- **phpMyAdmin opzionale** per debug (SSH tunnel)
 
-### 1. Clone sul VPS
+### Quick Start Production
+
+#### Prerequisiti
+
+1. VPS con Docker + Docker Compose
+2. Caddy Docker Proxy installato (vedi `docs/CADDY_PROXY_SETUP.md`)
+3. Dominio con DNS puntato al VPS
+
+#### Deploy
 
 ```bash
-ssh user@your-vps.com
-
+# 1. Clone sul VPS
+ssh user@vps.com
 cd /var/www
-git clone https://github.com/FrancescoCorbosiero/frost-theme-custom-plugin.git your-project-name
-cd your-project-name
-```
+git clone <repo> nome-progetto
+cd nome-progetto
 
-### 2. Setup environment production
-
-```bash
+# 2. Configure
 cd docker/production
 cp .env.example .env
-nano .env
+nano .env  # Modifica PROJECT_NAME, DOMAIN, passwords
+
+# 3. Deploy
+docker compose up -d
+
+# 4. Verifica
+docker compose logs -f
+# Vai su https://tuo-dominio.com
 ```
 
-**Modifica `.env` con dati reali:**
-```env
-# Database
-WORDPRESS_DB_NAME=progetto_db
-WORDPRESS_DB_USER=wpuser
-WORDPRESS_DB_PASSWORD=STRONG_PASSWORD_HERE
-MYSQL_ROOT_PASSWORD=STRONG_ROOT_PASSWORD_HERE
-
-# WordPress
-WORDPRESS_TABLE_PREFIX=wp_
-WORDPRESS_DEBUG=false
-
-# Domain
-DOMAIN=tuodominio.com
-```
-
-### 3. Configura Caddy per SSL
-
-Modifica `docker/production/Caddyfile`:
-
-```caddyfile
-tuodominio.com {
-    reverse_proxy wordpress:80
-    encode gzip
-}
-```
-
-### 4. Deploy con Docker Compose
+#### Comandi utili
 
 ```bash
-docker-compose up -d
+# Deploy updates
+bash docker/scripts/deploy.sh
+
+# Backup database
+bash docker/scripts/backup-db.sh
+
+# Restore database
+bash docker/scripts/restore-db.sh /path/to/backup.sql.gz
+
+# phpMyAdmin (debug via SSH tunnel)
+docker compose --profile debug up -d
+ssh -L 8081:localhost:8081 user@vps.com
+# Accedi: http://localhost:8081
 ```
 
-### 5. Verifica SSL e accesso
+### Differenze Development vs Production
 
-- Vai su: https://tuodominio.com
-- SSL dovrebbe essere attivo automaticamente (Let's Encrypt via Caddy)
+| Feature | Development | Production |
+|---------|------------|------------|
+| Database | MySQL 8.0 | MariaDB 11.4-lts |
+| Networking | Bridge network locale | Caddy network esterno |
+| Volumes | Bind mounts (hot reload) | Named volumes |
+| phpMyAdmin | Sempre attivo :8081 | Opzionale (SSH tunnel) |
+| SSL | No (localhost) | Automatico (Let's Encrypt) |
+| Resource limits | No | Si (configurabili) |
+| Healthchecks | No | Si (MariaDB) |
+| File editing | Abilitato | Disabilitato (security) |
+
+Vedi documentazione completa:
+- `docs/CADDY_PROXY_SETUP.md` - Setup Caddy Proxy
+- `docs/DEPLOYMENT_PRODUCTION.md` - Guida deploy VPS
 
 ## 🔧 Comandi Utili
 
