@@ -17,6 +17,7 @@
 # ============================================
 # - internal: comunicazione interna tra container
 # - caddy: network esterno condiviso con Caddy Docker Proxy
+name: ${PROJECT_NAME}
 networks:
   internal:
     name: ${PROJECT_NAME}-internal
